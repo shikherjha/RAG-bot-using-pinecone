@@ -1,8 +1,11 @@
 import os
+# MUST come *before* any `import streamlit`
+os.environ["STREAMLIT_WATCH_SERVICE"] = "none"
+os.environ["USER_AGENT"] = "rag-multi-agent-qa/1.0 (+you@you.com)"
+
 import re
 import math
 import streamlit as st
-
 # Display version info to help debug deployment issues
 import sys
 st.sidebar.markdown("### Debug Info")
@@ -10,9 +13,7 @@ with st.sidebar.expander("Python and Package Versions"):
     st.code(f"Python version: {sys.version}")
     st.code(f"Sys path: {sys.path[:2]}")  # Show first two entries
 
-# Disable Streamlit's file watcher errors and identify your requests
-os.environ["STREAMLIT_WATCH_SERVICE"] = "none"
-os.environ["USER_AGENT"] = "rag-multi-agent-qa/1.0 (+jhashikher@gmail.com)"
+
 
 # Handle secrets first - simplified approach for Streamlit Cloud
 try:
