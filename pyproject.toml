@@ -1,5 +1,5 @@
 [project]
-name = "rag-multi-agent-qa"
+name = "assessmet"
 version = "0.1.0"
 description = "RAG powered multi-agent Q&A application with Streamlit"
 readme = "README.md"
