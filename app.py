@@ -1,19 +1,35 @@
 import os
-# MUST come *before* any `import streamlit`
+# Set environment variables to disable Streamlit's file watching
 os.environ["STREAMLIT_WATCH_SERVICE"] = "none"
+os.environ["STREAMLIT_SERVER_WATCH_DIRS"] = "false"
 os.environ["USER_AGENT"] = "rag-multi-agent-qa/1.0 (+you@you.com)"
+
+# Add this to handle PyTorch path issues
+import sys
+orig_import = __import__
+
+def patched_import(name, globals=None, locals=None, fromlist=(), level=0):
+    # Skip torch._classes path monitoring
+    if name == "torch._classes" and fromlist and "__path__" in fromlist:
+        if globals is None:
+            globals = {}
+        return sys.modules.get(name)
+    return orig_import(name, globals, locals, fromlist, level)
+
+sys.meta_path = [
+    importer for importer in sys.meta_path 
+    if not hasattr(importer, 'find_spec') or 'torch._classes' not in str(importer.find_spec)
+]
+sys.__import__ = patched_import
 
 import re
 import math
 import streamlit as st
 # Display version info to help debug deployment issues
-import sys
 st.sidebar.markdown("### Debug Info")
 with st.sidebar.expander("Python and Package Versions"):
     st.code(f"Python version: {sys.version}")
     st.code(f"Sys path: {sys.path[:2]}")  # Show first two entries
-
-
 
 # Handle secrets first - simplified approach for Streamlit Cloud
 try:
@@ -34,8 +50,9 @@ try:
 except ImportError:
     st.sidebar.info("💡 dotenv not available, using system environment")
 
-# Show which packages are installed
+# Show which packages are installed - safer implementation
 try:
+    installed_packages = {}
     import pkg_resources
     installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
     with st.sidebar.expander("Installed Packages"):
