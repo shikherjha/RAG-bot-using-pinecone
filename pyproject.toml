@@ -1,9 +1,23 @@
 [project]
-name = "assessmet"
+name = "rag-multi-agent-qa"
 version = "0.1.0"
-description = "Add your description here"
+description = "RAG powered multi-agent Q&A application with Streamlit"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.9"
 dependencies = [
-    "langchain-openai>=0.3.16",
+    "langchain>=0.1.8",
+    "langchain-community>=0.0.24",
+    "langchain-core>=0.1.18",
+    "langchain-groq>=0.1.6",
+    "langchain-openai>=0.1.0",
+    "langchain-huggingface>=0.0.2",
+    "chromadb>=0.4.22",
+    "python-dotenv>=1.0.0",
+    "streamlit>=1.32.0",
+    "tavily-python>=0.3.0",
+    "pypdf>=3.17.0",
+    "langsmith>=0.0.75",
+    "bs4>=0.0.1",
+    "requests>=2.31.0",
+    "sentence-transformers>=2.2.2",
 ]

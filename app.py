@@ -14,21 +14,24 @@ with st.sidebar.expander("Python and Package Versions"):
 os.environ["STREAMLIT_WATCH_SERVICE"] = "none"
 os.environ["USER_AGENT"] = "rag-multi-agent-qa/1.0 (+jhashikher@gmail.com)"
 
-# Handle dotenv import safely for Streamlit Cloud
+# Handle secrets first - simplified approach for Streamlit Cloud
+try:
+    # Direct access to Streamlit secrets
+    if hasattr(st, 'secrets') and st.secrets:
+        for key in st.secrets:
+            if isinstance(st.secrets[key], str):  # Only set string values
+                os.environ[key] = st.secrets[key]
+        st.sidebar.success("✅ Loaded Streamlit secrets")
+except Exception as e:
+    st.sidebar.warning(f"⚠️ Error loading secrets: {str(e)}")
+
+# Fallback to .env if not in cloud and dotenv is available
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    st.sidebar.success("✅ Loaded .env file")
+    st.sidebar.info("📄 Attempted to load .env file")
 except ImportError:
-    st.sidebar.info("Using Streamlit secrets instead of .env")
-
-# Fallback to Streamlit secrets
-try:
-    for key, val in st.secrets.items():
-        os.environ.setdefault(key, val)
-    st.sidebar.success("✅ Loaded Streamlit secrets")
-except Exception as e:
-    st.sidebar.warning(f"⚠️ No secrets found: {str(e)}")
+    st.sidebar.info("💡 dotenv not available, using system environment")
 
 # Show which packages are installed
 try:
@@ -36,7 +39,8 @@ try:
     installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
     with st.sidebar.expander("Installed Packages"):
         for pkg in ["langchain", "langchain-community", "langchain-core", "streamlit", 
-                   "sentence-transformers", "chromadb", "torch"]:
+                   "sentence-transformers", "chromadb", "torch", "langchain-groq", 
+                   "langchain-huggingface"]:
             version = installed_packages.get(pkg, "Not installed")
             st.code(f"{pkg}: {version}")
 except Exception as e:
@@ -74,6 +78,7 @@ try:
 except ImportError as e:
     st.sidebar.error(f"❌ Failed to import ChatGroq: {e}")
     dependencies_ok = False
+    st.sidebar.info("📦 Try running: pip install langchain-groq")
 
 # 2. Embeddings setup
 embeddings = None
@@ -89,6 +94,7 @@ try:
 except ImportError as e:
     st.sidebar.error(f"❌ Failed to import embeddings: {e}")
     dependencies_ok = False
+    st.sidebar.info("📦 Try running: pip install langchain-huggingface sentence-transformers")
 except Exception as e:
     st.sidebar.error(f"❌ Error loading embeddings: {e}")
     dependencies_ok = False
@@ -104,6 +110,7 @@ try:
 except ImportError as e:
     st.sidebar.error(f"❌ Failed to import document loaders: {e}")
     dependencies_ok = False
+    st.sidebar.info("📦 Try running: pip install langchain-community pypdf")
 
 # 4. Vector store
 try:
@@ -112,6 +119,7 @@ try:
 except ImportError as e:
     st.sidebar.error(f"❌ Failed to import vector store: {e}")
     dependencies_ok = False
+    st.sidebar.info("📦 Try running: pip install chromadb")
 
 # 5. Core components and tools
 try:
@@ -133,6 +141,7 @@ try:
 except ImportError as e:
     st.sidebar.error(f"❌ Failed to import core components: {e}")
     dependencies_ok = False
+    st.sidebar.info("📦 Try running: pip install langchain-core")
 
 # 6. Agent setup
 try:
@@ -154,6 +163,7 @@ try:
 except ImportError as e:
     st.sidebar.error(f"❌ Failed to import agent components: {e}")
     dependencies_ok = False
+    st.sidebar.info("📦 Try running: pip install langchain tavily-python")
 
 # Main functionality
 if not dependencies_ok:
@@ -217,19 +227,19 @@ Answer:"""
 
 def setup_agent(rag_chain):
     tools = [
-        Tool("Calculator", calculator_tool, "Perform math")
+        Tool(name="Calculator", func=calculator_tool, description="Perform math calculations")
     ]
     
     # Add Tavily if available
     if tavily_available:
         tools.append(Tool(
-            "Dictionary",
-            TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=1),
-            "Define terms"
+            name="Dictionary",
+            func=TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=1),
+            description="Define terms or search for information"
         ))
     
     # Add RAG tool
-    tools.append(Tool("RAG", rag_chain.invoke, "Answer from docs"))
+    tools.append(Tool(name="RAG", func=rag_chain.invoke, description="Answer questions from documents"))
     
     # Pull the prompt template
     prompt = hub.pull("hwchase17/structured-chat-agent")
