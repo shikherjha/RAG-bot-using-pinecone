@@ -2,11 +2,19 @@ import os
 import argparse
 from dotenv import load_dotenv
 
-# 0) Set a USER_AGENT so WebBaseLoader isn't anonymous
+# 0) User-Agent to avoid anonymous WebBaseLoader requests
 os.environ["USER_AGENT"] = "rag-ingest-script/1.0 (+jhashikher@gmail.com)"
 
-# 1) Load environment variables
+# 1) Load environment variables from .env
 load_dotenv()
+
+# Fallback to Streamlit secrets if running in Cloud (optional)
+try:
+    from streamlit import secrets
+    for _key, _val in secrets.items():
+        os.environ.setdefault(_key, _val)
+except ImportError:
+    pass
 
 # Optional: LangChain tracing if you're using LangSmith
 if os.getenv("LANGCHAIN_API_KEY"):
