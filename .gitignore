@@ -8,6 +8,7 @@ wheels/
 
 # Virtual environments
 .venv
+my_env_py310/
 
 .env 
 .streamlit/secrets.toml

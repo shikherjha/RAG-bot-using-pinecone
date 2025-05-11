@@ -2,6 +2,14 @@ import os
 import argparse
 from dotenv import load_dotenv
 
+# Try to handle SQLite issues if pysqlite3 is available
+try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    pass  # Continue without the SQLite patch
+
 # 0) User-Agent to avoid anonymous WebBaseLoader requests
 os.environ["USER_AGENT"] = "rag-ingest-script/1.0 (+jhashikher@gmail.com)"
 
@@ -29,11 +37,56 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 # 3) Local embeddings (no API key)
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# 4) Vector store
-from langchain_community.vectorstores import Chroma
+# 4) Vector store - Pinecone
+from pinecone import Pinecone, ServerlessSpec
+from langchain_pinecone import PineconeVectorStore
+
+def initialize_pinecone():
+    """Initialize Pinecone and ensure index exists"""
+    try:
+        # Get Pinecone credentials from environment
+        api_key = os.getenv("PINECONE_API_KEY")
+        environment = os.getenv("PINECONE_ENV")
+        index_name = os.getenv("PINECONE_INDEX_NAME")
+        
+        if not all([api_key, environment, index_name]):
+            print("❌ Missing Pinecone credentials. Check your .env file.")
+            missing = []
+            if not api_key: missing.append("PINECONE_API_KEY")
+            if not environment: missing.append("PINECONE_ENV")
+            if not index_name: missing.append("PINECONE_INDEX_NAME")
+            print(f"   Missing: {', '.join(missing)}")
+            return None, None
+            
+        # Initialize Pinecone client
+        pc = Pinecone(api_key=api_key)
+        
+        # Check if index exists
+        existing_indexes = [idx.name for idx in pc.list_indexes()]
+        
+        if index_name not in existing_indexes:
+            print(f"Creating new Pinecone index: {index_name}")
+            # Create the index with proper dimensions for the embedding model
+            pc.create_index(
+                name=index_name,
+                dimension=384,  # all-MiniLM-L6-v2 uses 384 dimensions
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region=environment)
+            )
+            print(f"✅ Created new Pinecone index: {index_name}")
+        else:
+            print(f"✅ Using existing Pinecone index: {index_name}")
+            
+        # Get the index
+        index = pc.Index(index_name)
+        return pc, index
+        
+    except Exception as e:
+        print(f"❌ Error initializing Pinecone: {e}")
+        return None, None
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingest documents into the vector database")
+    parser = argparse.ArgumentParser(description="Ingest documents into the Pinecone vector database")
     parser.add_argument("--files", nargs="+", help="Paths to files to ingest")
     parser.add_argument("--urls", nargs="+", help="URLs to ingest")
     args = parser.parse_args()
@@ -97,17 +150,22 @@ def main():
     chunks = text_splitter.split_documents(documents)
     print(f"  → Created {len(chunks)} chunks")
 
-    # 10) Build or persist vector store
-    print("Creating/updating Chroma vector store...")
+    # 10) Initialize Pinecone
+    _, _ = initialize_pinecone()
+    
+    # 11) Build vector store with Pinecone
+    print("Creating/updating Pinecone vector store...")
     try:
-        vectorstore = Chroma.from_documents(
+        vectorstore = PineconeVectorStore.from_documents(
             documents=chunks,
             embedding=embeddings,
-            persist_directory="./chroma_db"
+            index_name=os.getenv("PINECONE_INDEX_NAME"),
+            namespace="rag-documents"  # Optional organization by namespace
         )
-        print(f"✅ Successfully ingested {len(chunks)} chunks into ./chroma_db")
+        print(f"✅ Successfully ingested {len(chunks)} chunks into Pinecone index: {os.getenv('PINECONE_INDEX_NAME')}")
     except Exception as e:
         print("❌ Error creating vector store:", e)
+        print("   Error details:", str(e))
 
 if __name__ == "__main__":
     main()

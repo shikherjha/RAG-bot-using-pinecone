@@ -4,23 +4,14 @@ os.environ["STREAMLIT_WATCH_SERVICE"] = "none"
 os.environ["STREAMLIT_SERVER_WATCH_DIRS"] = "false"
 os.environ["USER_AGENT"] = "rag-multi-agent-qa/1.0 (+you@you.com)"
 
-# Add this to handle PyTorch path issues
-import sys
-orig_import = __import__
-
-def patched_import(name, globals=None, locals=None, fromlist=(), level=0):
-    # Skip torch._classes path monitoring
-    if name == "torch._classes" and fromlist and "__path__" in fromlist:
-        if globals is None:
-            globals = {}
-        return sys.modules.get(name)
-    return orig_import(name, globals, locals, fromlist, level)
-
-sys.meta_path = [
-    importer for importer in sys.meta_path 
-    if not hasattr(importer, 'find_spec') or 'torch._classes' not in str(importer.find_spec)
-]
-sys.__import__ = patched_import
+# Try to handle PyTorch path issues if pysqlite3 is available
+try:
+    __import__('pysqlite3')
+    import sys
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    import sys
+    # Continue without the SQLite patch
 
 import re
 import math
@@ -57,7 +48,7 @@ try:
     installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
     with st.sidebar.expander("Installed Packages"):
         for pkg in ["langchain", "langchain-community", "langchain-core", "streamlit", 
-                   "sentence-transformers", "chromadb", "torch", "langchain-groq", 
+                   "sentence-transformers", "pinecone-client", "langchain-pinecone", "torch", "langchain-groq", 
                    "langchain-huggingface"]:
             version = installed_packages.get(pkg, "Not installed")
             st.code(f"{pkg}: {version}")
@@ -130,14 +121,29 @@ except ImportError as e:
     dependencies_ok = False
     st.sidebar.info("📦 Try running: pip install langchain-community pypdf")
 
-# 4. Vector store
+# 4. Vector store - Pinecone
 try:
-    from langchain_community.vectorstores import Chroma
-    st.sidebar.success("✅ Vector store ready")
+    from pinecone import Pinecone, ServerlessSpec
+    from langchain_pinecone import PineconeVectorStore
+    
+    # Verify Pinecone credentials
+    pinecone_api_key = os.getenv("PINECONE_API_KEY")
+    pinecone_environment = os.getenv("PINECONE_ENV")
+    pinecone_index_name = os.getenv("PINECONE_INDEX_NAME")
+    
+    if pinecone_api_key and pinecone_environment and pinecone_index_name:
+        st.sidebar.success("✅ Pinecone vector store ready")
+    else:
+        missing = []
+        if not pinecone_api_key: missing.append("PINECONE_API_KEY")
+        if not pinecone_environment: missing.append("PINECONE_ENV")
+        if not pinecone_index_name: missing.append("PINECONE_INDEX_NAME")
+        st.sidebar.error(f"❌ Missing Pinecone credentials: {', '.join(missing)}")
+        dependencies_ok = False
 except ImportError as e:
-    st.sidebar.error(f"❌ Failed to import vector store: {e}")
+    st.sidebar.error(f"❌ Failed to import Pinecone: {e}")
     dependencies_ok = False
-    st.sidebar.info("📦 Try running: pip install chromadb")
+    st.sidebar.info("📦 Try running: pip install pinecone-client langchain-pinecone")
 
 # 5. Core components and tools
 try:
@@ -210,18 +216,47 @@ def load_and_process_documents(file_paths=None, urls=None):
         return []
     return text_splitter.split_documents(docs)
 
+def initialize_pinecone():
+    """Initialize Pinecone client and ensure the index exists"""
+    try:
+        pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+        index_name = os.getenv("PINECONE_INDEX_NAME")
+        
+        # Check if index exists
+        existing_indexes = [idx.name for idx in pc.list_indexes()]
+        
+        if index_name not in existing_indexes:
+            # Create the index if it doesn't exist
+            pc.create_index(
+                name=index_name,
+                dimension=384,  # all-MiniLM-L6-v2 dimension is 384
+                metric="cosine",
+                spec=ServerlessSpec(cloud="aws", region=os.getenv("PINECONE_ENV"))
+            )
+            st.sidebar.info(f"Created new Pinecone index: {index_name}")
+        
+        return pc.Index(index_name)
+    except Exception as e:
+        st.error(f"Error initializing Pinecone: {e}")
+        return None
+
 def setup_vectorstore(chunks):
     if not chunks:
         return None
         
     try:
-        return Chroma.from_documents(
+        # Initialize Pinecone index
+        _ = initialize_pinecone()
+        
+        # Create vector store
+        return PineconeVectorStore.from_documents(
             documents=chunks,
             embedding=embeddings,
-            persist_directory="./chroma_db"
+            index_name=os.getenv("PINECONE_INDEX_NAME"),
+            namespace="rag-documents"  # Optional namespace for organization
         )
     except Exception as e:
-        st.error(f"Error creating vector store: {e}")
+        st.error(f"Error creating Pinecone vector store: {e}")
         return None
 
 def setup_retrieval_chain(vs):
@@ -282,7 +317,7 @@ if st.sidebar.button("Process Docs"):
             vs = setup_vectorstore(chunks)
             if vs:
                 st.session_state.vs = vs
-                st.sidebar.success(f"✅ Indexed {len(chunks)} chunks")
+                st.sidebar.success(f"✅ Indexed {len(chunks)} chunks in Pinecone")
             else:
                 st.error("Failed to create vector store")
         else:

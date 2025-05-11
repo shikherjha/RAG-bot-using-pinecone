@@ -1,0 +1,4 @@
+libblas-dev
+liblapack-dev
+gfortran
+python3-dev

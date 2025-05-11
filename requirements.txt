@@ -9,7 +9,8 @@ langchain-openai>=0.1.0
 langchain-huggingface>=0.0.2
 
 # Vector database
-chromadb>=0.4.22
+pinecone-client>=3.0.0  # Updated to ensure latest Pinecone SDK 
+langchain-pinecone>=0.1.0
 
 # Utilities
 python-dotenv>=1.0.0
@@ -28,3 +29,7 @@ safetensors>=0.4.0
 # Using CPU-only torch to reduce dependency size
 torch>=2.2.2
 torchvision>=0.16.0
+
+# Note: If SQLite issues occur, you may need to install pysqlite3-binary manually
+# Remove the comment below on systems where it's available
+# pysqlite3-binary>=0.5.2
