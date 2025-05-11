@@ -21,17 +21,13 @@ if os.getenv("LANGCHAIN_API_KEY"):
     os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "true")
     os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "rag-multi-agent-qa")
 
-# 2) Imports for loading and splitting
+# 2) Imports for loading and splitting - SIMPLIFIED
 from langchain_community.document_loaders import PyPDFLoader, TextLoader, WebBaseLoader
 from langchain_community.document_loaders.csv_loader import CSVLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
-# 3) Local embeddings (no API key) - Fix deprecation warning
-try:
-    from langchain_huggingface import HuggingFaceEmbeddings
-except ImportError:
-    # Fallback to old import path
-    from langchain_community.embeddings import HuggingFaceEmbeddings
+# 3) Local embeddings (no API key)
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # 4) Vector store
 from langchain_community.vectorstores import Chroma

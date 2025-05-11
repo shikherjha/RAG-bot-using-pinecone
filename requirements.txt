@@ -1,15 +1,30 @@
-langchain>=0.1.0
-langchain-openai>=0.1.0
-langchain-community>=0.0.15
-langchain-groq>=0.1.0
-langchain-huggingface>=0.0.2
-chromadb>=0.4.22
-python-dotenv>=1.0.0
-streamlit>=1.27.0
-tavily-python>=0.3.0
-pypdf>=3.17.0
-langsmith>=0.0.72
-bs4>=0.0.1
-requests>=2.31.0
-sentence-transformers==2.5.1
-torch==2.2.1
+# Core packages
+langchain==0.1.8
+langchain-community==0.0.24
+langchain-core==0.1.18
+
+# LLM providers
+langchain-groq==0.1.6
+langchain-openai==0.1.0
+langchain-huggingface==0.0.2
+
+# Vector database
+chromadb==0.4.22
+
+# Utilities
+python-dotenv==1.0.0
+streamlit==1.32.0
+tavily-python==0.3.0
+pypdf==3.17.0
+langsmith==0.0.75
+bs4==0.0.1
+requests==2.31.0
+
+# Embeddings
+sentence-transformers==2.2.2
+
+# You probably don't need the full torch on Streamlit Cloud
+# Using CPU-only torch to reduce dependency size
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.1.0+cpu
+

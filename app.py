@@ -1,114 +1,126 @@
 import os
-# Disable Streamlit's file watcher errors and identify your requests
-os.environ["STREAMLIT_WATCH_SERVICE"] = "none"
-os.environ["USER_AGENT"] = "rag-multi-agent-qa/1.0 (+jhashikher@gmail.com)"
-
 import re
 import math
 import streamlit as st
+
+# Display version info to help debug deployment issues
+import sys
+st.sidebar.markdown("### Debug Info")
+with st.sidebar.expander("Python and Package Versions"):
+    st.code(f"Python version: {sys.version}")
+    st.code(f"Sys path: {sys.path[:2]}")  # Show first two entries
+
+# Disable Streamlit's file watcher errors and identify your requests
+os.environ["STREAMLIT_WATCH_SERVICE"] = "none"
+os.environ["USER_AGENT"] = "rag-multi-agent-qa/1.0 (+jhashikher@gmail.com)"
 
 # Handle dotenv import safely for Streamlit Cloud
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    print("Loaded .env file successfully")
+    st.sidebar.success("✅ Loaded .env file")
 except ImportError:
-    print("dotenv import failed, using defaults and secrets")
-    # Just continue without dotenv
+    st.sidebar.info("Using Streamlit secrets instead of .env")
 
-# Fallback to Streamlit secrets if running in Cloud
+# Fallback to Streamlit secrets
 try:
-    from streamlit import secrets
-    for _key, _val in secrets.items():
-        os.environ.setdefault(_key, _val)
+    for key, val in st.secrets.items():
+        os.environ.setdefault(key, val)
+    st.sidebar.success("✅ Loaded Streamlit secrets")
 except Exception as e:
-    print(f"Error loading secrets: {e}")
+    st.sidebar.warning(f"⚠️ No secrets found: {str(e)}")
 
+# Show which packages are installed
+try:
+    import pkg_resources
+    installed_packages = {pkg.key: pkg.version for pkg in pkg_resources.working_set}
+    with st.sidebar.expander("Installed Packages"):
+        for pkg in ["langchain", "langchain-community", "langchain-core", "streamlit", 
+                   "sentence-transformers", "chromadb", "torch"]:
+            version = installed_packages.get(pkg, "Not installed")
+            st.code(f"{pkg}: {version}")
+except Exception as e:
+    st.sidebar.warning(f"Could not list packages: {e}")
+
+# Set up LangChain tracing if available
 if os.getenv("LANGCHAIN_API_KEY"):
     os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "true")
     os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "rag-multi-agent-qa")
 
-# 2) LLM setup (Groq)
+# App header
+st.title("RAG-Powered Multi-Agent Q&A")
+st.write("Upload documents or provide URLs to ask questions about their content.")
+
+# Import dependencies with clear error handling
+dependencies_ok = True
+
+# 1. LLM setup
+llm = None
 try:
     from langchain_groq import ChatGroq
-    llm = ChatGroq(
-        api_key=os.getenv("GROQ_API_KEY"),
-        model_name="llama3-70b-8192",
-        temperature=0.2,
-        max_tokens=1024,
-    )
+    
+    api_key = os.getenv("GROQ_API_KEY")
+    if api_key:
+        llm = ChatGroq(
+            api_key=api_key,
+            model_name="llama3-70b-8192",
+            temperature=0.2,
+            max_tokens=1024,
+        )
+        st.sidebar.success("✅ LLM initialized")
+    else:
+        st.sidebar.error("❌ Missing GROQ_API_KEY")
+        dependencies_ok = False
 except ImportError as e:
-    st.error(f"Failed to import ChatGroq: {e}")
-    llm = None
+    st.sidebar.error(f"❌ Failed to import ChatGroq: {e}")
+    dependencies_ok = False
 
-# 3) Local embeddings (no API keys)
+# 2. Embeddings setup
 embeddings = None
 try:
-    try:
-        from langchain_huggingface import HuggingFaceEmbeddings
-    except ImportError:
-        from langchain_community.embeddings import HuggingFaceEmbeddings
-
+    from langchain_huggingface import HuggingFaceEmbeddings
+    
+    @st.cache_resource(show_spinner="Loading embedding model...")
     def get_embeddings():
-        try:
-            return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-        except Exception as e:
-            st.error(f"Embedding load failed: {e}")
-            return None
-
+        return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    
     embeddings = get_embeddings()
+    st.sidebar.success("✅ Embeddings initialized")
 except ImportError as e:
-    st.error(f"Failed to import embeddings: {e}")
-    embeddings = None
+    st.sidebar.error(f"❌ Failed to import embeddings: {e}")
+    dependencies_ok = False
+except Exception as e:
+    st.sidebar.error(f"❌ Error loading embeddings: {e}")
+    dependencies_ok = False
 
-# 4) Document loading & splitting
+# 3. Document loaders
 try:
     from langchain_community.document_loaders import PyPDFLoader, TextLoader, WebBaseLoader
     from langchain_community.document_loaders.csv_loader import CSVLoader
     from langchain.text_splitter import RecursiveCharacterTextSplitter
-
+    
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-
-    def load_and_process_documents(file_paths=None, urls=None):
-        docs = []
-        for path in file_paths or []:
-            loader = PyPDFLoader(path) if path.lower().endswith(".pdf") \
-                     else CSVLoader(path) if path.lower().endswith(".csv") \
-                     else TextLoader(path)
-            docs.extend(loader.load())
-        for url in urls or []:
-            docs.extend(WebBaseLoader(url).load())
-        return text_splitter.split_documents(docs)
+    st.sidebar.success("✅ Document loaders ready")
 except ImportError as e:
-    st.error(f"Failed to import document loaders: {e}")
-    load_and_process_documents = None
+    st.sidebar.error(f"❌ Failed to import document loaders: {e}")
+    dependencies_ok = False
 
-# 5) Vector store creation
+# 4. Vector store
 try:
     from langchain_community.vectorstores import Chroma
-
-    def setup_vectorstore(chunks):
-        if embeddings is None:
-            st.error("No embeddings available.")
-            return None
-        try:
-            return Chroma.from_documents(
-                documents=chunks,
-                embedding=embeddings,
-                persist_directory="./chroma_db"
-            )
-        except Exception as e:
-            st.error(f"Vector store error: {e}")
-            return None
+    st.sidebar.success("✅ Vector store ready")
 except ImportError as e:
-    st.error(f"Failed to import Chroma: {e}")
-    setup_vectorstore = None
+    st.sidebar.error(f"❌ Failed to import vector store: {e}")
+    dependencies_ok = False
 
-# 6) Tools
+# 5. Core components and tools
 try:
     from langchain_core.tools import Tool
-    from langchain_community.tools.tavily_search.tool import TavilySearchResults
-
+    from langchain_core.prompts import PromptTemplate
+    from langchain_core.runnables import RunnablePassthrough
+    from langchain_core.output_parsers import StrOutputParser
+    
+    # Simplified tool initialization - no Tavily yet
     def calculator_tool(query: str) -> str:
         safe = re.sub(r"[^0-9+\-*/().^\s]", "", query).replace("^", "**")
         try:
@@ -116,134 +128,159 @@ try:
             return f"Result of {query} = {result}"
         except Exception as e:
             return f"Calculation error: {e}"
+    
+    st.sidebar.success("✅ Core components ready")
 except ImportError as e:
-    st.error(f"Failed to import tools: {e}")
-    calculator_tool = None
-    Tool = None
-    TavilySearchResults = None
+    st.sidebar.error(f"❌ Failed to import core components: {e}")
+    dependencies_ok = False
 
-# 7) RAG chain helper
-try:
-    from langchain_core.prompts import PromptTemplate
-    from langchain_core.runnables import RunnablePassthrough
-    from langchain_core.output_parsers import StrOutputParser
-
-    def setup_retrieval_chain(vs):
-        retriever = vs.as_retriever(search_kwargs={"k": 3})
-        template = """Answer the question using the context below.
-
-    Context:
-    {context}
-
-    Question:
-    {question}
-
-    Answer:"""
-        prompt = PromptTemplate.from_template(template)
-        return (
-            {"context": retriever, "question": RunnablePassthrough()}
-            | prompt
-            | llm
-            | StrOutputParser()
-        )
-except ImportError as e:
-    st.error(f"Failed to import LangChain core: {e}")
-    setup_retrieval_chain = None
-
-# 8) Agent setup with default prompt from Hub
+# 6. Agent setup
 try:
     from langchain import hub
     from langchain.agents import create_structured_chat_agent, AgentExecutor
-    from langchain.callbacks import LangChainTracer
-
-    def setup_agent(rag_chain):
-        tools = [
-            Tool("Calculator", calculator_tool, "Perform math"),
-            Tool(
-                "Dictionary",
-                TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=1),
-                "Define terms"
-            ),
-            Tool("RAG", rag_chain.invoke, "Answer from docs")
-        ]
-        # Pull the built-in structured-chat prompt (includes tool_names/tools/agent_scratchpad)
-        prompt = hub.pull("hwchase17/structured-chat-agent")
-        agent = create_structured_chat_agent(llm, tools, prompt)
-        tracer = LangChainTracer() if os.getenv("LANGCHAIN_API_KEY") else None
-        return AgentExecutor(agent=agent, tools=tools, verbose=True, callbacks=[tracer] if tracer else [])
-except ImportError as e:
-    st.error(f"Failed to import LangChain Hub/Agents: {e}")
-    setup_agent = None
-
-# 9) Streamlit UI
-def main():
-    st.title("RAG-Powered Multi-Agent Q&A")
-
-    # Check for missing dependencies
-    missing_deps = []
-    if llm is None:
-        missing_deps.append("LLM (langchain_groq)")
-    if embeddings is None:
-        missing_deps.append("Embeddings")
-    if load_and_process_documents is None:
-        missing_deps.append("Document loaders")
-    if setup_vectorstore is None:
-        missing_deps.append("Vector store")
-    if calculator_tool is None or Tool is None:
-        missing_deps.append("Tools")
-    if setup_retrieval_chain is None:
-        missing_deps.append("LangChain core")
-    if setup_agent is None:
-        missing_deps.append("LangChain Hub/Agents")
     
-    if missing_deps:
-        st.error(f"Missing dependencies: {', '.join(missing_deps)}")
-        st.info("Please check your requirements.txt and make sure all dependencies are installed.")
-        return
+    tavily_available = False
+    try:
+        from langchain_community.tools.tavily_search.tool import TavilySearchResults
+        if os.getenv("TAVILY_API_KEY"):
+            tavily_available = True
+            st.sidebar.success("✅ Tavily search available")
+        else:
+            st.sidebar.warning("⚠️ Tavily API key missing")
+    except ImportError:
+        st.sidebar.warning("⚠️ Tavily module not available")
+    
+    st.sidebar.success("✅ Agent components ready")
+except ImportError as e:
+    st.sidebar.error(f"❌ Failed to import agent components: {e}")
+    dependencies_ok = False
 
-    # Sidebar: API status
-    with st.sidebar.expander("API Status"):
-        st.write(f"Groq: {'✅' if os.getenv('GROQ_API_KEY') else '❌'}")
-        st.write(f"Tavily: {'✅' if os.getenv('TAVILY_API_KEY') else '❌'}")
-        if embeddings is None:
-            st.error("Embeddings failed to load.")
+# Main functionality
+if not dependencies_ok:
+    st.error("Some dependencies failed to load. Please check the sidebar for details.")
+    st.stop()
 
-    # Document upload/URL ingestion
-    uploaded = st.sidebar.file_uploader("Upload files", accept_multiple_files=True)
-    urls = st.sidebar.text_area("Or enter URLs (one per line)").splitlines()
-    if st.sidebar.button("Process Docs"):
+# Helper functions
+def load_and_process_documents(file_paths=None, urls=None):
+    docs = []
+    for path in file_paths or []:
+        try:
+            loader = PyPDFLoader(path) if path.lower().endswith(".pdf") \
+                    else CSVLoader(path) if path.lower().endswith(".csv") \
+                    else TextLoader(path)
+            docs.extend(loader.load())
+        except Exception as e:
+            st.error(f"Error loading {path}: {e}")
+    
+    for url in urls or []:
+        try:
+            docs.extend(WebBaseLoader(url).load())
+        except Exception as e:
+            st.error(f"Error loading {url}: {e}")
+    
+    if not docs:
+        return []
+    return text_splitter.split_documents(docs)
+
+def setup_vectorstore(chunks):
+    if not chunks:
+        return None
+        
+    try:
+        return Chroma.from_documents(
+            documents=chunks,
+            embedding=embeddings,
+            persist_directory="./chroma_db"
+        )
+    except Exception as e:
+        st.error(f"Error creating vector store: {e}")
+        return None
+
+def setup_retrieval_chain(vs):
+    retriever = vs.as_retriever(search_kwargs={"k": 3})
+    template = """Answer the question using the context below.
+
+Context:
+{context}
+
+Question:
+{question}
+
+Answer:"""
+    prompt = PromptTemplate.from_template(template)
+    return (
+        {"context": retriever, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+def setup_agent(rag_chain):
+    tools = [
+        Tool("Calculator", calculator_tool, "Perform math")
+    ]
+    
+    # Add Tavily if available
+    if tavily_available:
+        tools.append(Tool(
+            "Dictionary",
+            TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=1),
+            "Define terms"
+        ))
+    
+    # Add RAG tool
+    tools.append(Tool("RAG", rag_chain.invoke, "Answer from docs"))
+    
+    # Pull the prompt template
+    prompt = hub.pull("hwchase17/structured-chat-agent")
+    agent = create_structured_chat_agent(llm, tools, prompt)
+    return AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+# Document upload/URL ingestion
+uploaded = st.sidebar.file_uploader("Upload files", accept_multiple_files=True)
+urls = st.sidebar.text_area("Or enter URLs (one per line)").splitlines()
+
+if st.sidebar.button("Process Docs"):
+    with st.spinner("Processing documents..."):
         paths, vs_urls = [], [u for u in urls if u.strip()]
         for f in uploaded:
             p = f"./temp_{f.name}"
-            with open(p, "wb") as out: out.write(f.getbuffer())
+            with open(p, "wb") as out: 
+                out.write(f.getbuffer())
             paths.append(p)
+        
         chunks = load_and_process_documents(paths, vs_urls)
-        vs = setup_vectorstore(chunks)
-        if vs:
-            st.session_state.vs = vs
-            st.sidebar.success(f"Indexed {len(chunks)} chunks")
+        if chunks:
+            vs = setup_vectorstore(chunks)
+            if vs:
+                st.session_state.vs = vs
+                st.sidebar.success(f"✅ Indexed {len(chunks)} chunks")
+            else:
+                st.error("Failed to create vector store")
+        else:
+            st.warning("No content found to process")
+        
+        # Clean up temp files
         for p in paths:
             try: os.remove(p)
             except: pass
 
-    # Q&A interface
-    query = st.text_input("Ask a question")
-    if query and "vs" in st.session_state:
+# Q&A interface
+query = st.text_input("Ask a question")
+if query and "vs" in st.session_state:
+    with st.spinner("Thinking..."):
         vs = st.session_state.vs
         rag_chain = setup_retrieval_chain(vs)
         agent_exec = setup_agent(rag_chain)
 
-        # Tool routing: simple keyword check
+        # Tool routing
         if query.lower().startswith("calculate"):
             st.markdown("### Calculator")
             answer = calculator_tool(query)
-        elif query.lower().startswith("define"):
+        elif query.lower().startswith("define") and tavily_available:
             st.markdown("### Dictionary")
-            if os.getenv("TAVILY_API_KEY"):
-                res = TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=1)(query)
-                answer = res[0]["content"] if res else "No definition found."
-            else:
-                answer = "Dictionary unavailable."
+            res = TavilySearchResults(api_key=os.getenv("TAVILY_API_KEY"), max_results=1)(query)
+            answer = res[0]["content"] if res else "No definition found."
         else:
             st.markdown("### RAG Pipeline")
             docs = vs.as_retriever(search_kwargs={"k": 3}).get_relevant_documents(query)
@@ -251,13 +288,13 @@ def main():
                 for i, d in enumerate(docs, 1):
                     st.markdown(f"**Chunk {i}**")
                     st.write(d.page_content[:300] + ("…" if len(d.page_content) > 300 else ""))
+            
             result = agent_exec.invoke({"input": query})
             answer = result.get("output", "No answer returned.")
 
         st.markdown("### Answer")
         st.write(answer)
-    elif query:
-        st.warning("Please process documents first.")
-
-if __name__ == "__main__":
-    main()
+elif query:
+    st.warning("Please process documents first")
+else:
+    st.info("Upload documents and ask questions to get started!")
