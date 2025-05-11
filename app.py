@@ -10,6 +10,12 @@ from dotenv import load_dotenv
 
 # 1) Load .env for any API keys (Groq, Tavily, LangChain tracing)
 load_dotenv()
+
+# Fallback to Streamlit secrets if running in Cloud
+from streamlit import secrets
+for _key, _val in secrets.items():
+    os.environ.setdefault(_key, _val)
+
 if os.getenv("LANGCHAIN_API_KEY"):
     os.environ["LANGCHAIN_TRACING_V2"] = os.getenv("LANGCHAIN_TRACING_V2", "true")
     os.environ["LANGCHAIN_PROJECT"] = os.getenv("LANGCHAIN_PROJECT", "rag-multi-agent-qa")
